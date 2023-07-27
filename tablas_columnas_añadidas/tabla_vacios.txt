@@ -1,0 +1,10 @@
+CREATE TABLE administrativo.tabla_vacios (
+
+);
+ALTER TABLE administrativo.tabla_vacios ADD nemonico varchar(10) NULL;
+ALTER TABLE administrativo.tabla_vacios ADD fecha_inicio date NULL;
+ALTER TABLE administrativo.tabla_vacios ADD fecha_fin date NULL;
+ALTER TABLE administrativo.tabla_vacios ADD total_huecos int NULL;
+
+INSERT INTO administrativo.tabla_vacios (nemonico)
+SELECT nemonico FROM administrativo.estaciones_parametros;
