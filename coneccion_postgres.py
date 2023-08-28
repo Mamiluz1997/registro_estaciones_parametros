@@ -4,10 +4,10 @@ import psycopg2
 
 def coneccion_postgres():
     # Especificar los detalles de conexión a la base de datos PostgreSQL
-    host = "192.168.1.226"
+    host = "localhost"
     database = "bandahm"
     user = "postgres"
-    password = "inamhidb"
+    password = "postgres"
 
     # Crear la cadena de conexión
     connection_string = f"postgresql://{user}:{password}@{host}/{database}"
