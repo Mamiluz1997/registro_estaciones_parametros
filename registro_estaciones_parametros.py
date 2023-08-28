@@ -33,5 +33,5 @@ if __name__ == "__main__":
         df = obtener_fecha_por_copa__id(copa__id)
         if df is not None:
             print(f"Fechas para copa_id {copa__id}:")
-            print(df.head(50))  # Muestra solo los primeros 100 resultados
+            print(df.head(50))  # Muestra solo los primeros 50 resultados
             print()  # Agrega un espacio en blanco para separar las salidas en la consola
