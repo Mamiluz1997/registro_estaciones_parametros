@@ -1,58 +1,49 @@
-import pandas as pd
 from sqlalchemy import create_engine
+import pandas as pd
 import coneccion_postgres
-import obtener_combinacion_parametro
+import os
 
-def obtener_fecha_por_copa__id(copa__id):
-    try:
-        # Obtener la cadena de conexión a la base de datos PostgreSQL
-        connection_string = coneccion_postgres.coneccion_postgres()
+def main():
+    # Obtener la cadena de conexión
+    connection_string = coneccion_postgres.coneccion_postgres()
 
-        # Crear el objeto Engine utilizando SQLAlchemy
-        engine = create_engine(connection_string)
+    # Crear el objeto Engine utilizando SQLAlchemy
+    engine = create_engine(connection_string)
 
-        # Especificar el nombre de la tabla desde la que deseas realizar el SELECT
-        table_name = "data_m01"
+    # Consulta SQL para obtener los registros
+    select_query = """
+        SELECT 
+            dm.esta__id AS id_estacion,
+            ac.copanemo AS nemonico,
+            ac.copa__id AS id_copa,
+            dm.datafetd AS fecha_existente
+        FROM 
+            "storage".data_m01 dm
+        JOIN 
+            "administrativo".copa ac ON dm.esta__id::text = ac.copa__id::text
+        ORDER BY 
+            id_estacion, dm.datafetd;
+    """
 
-        # Ejecutar la consulta SELECT para obtener las fechas de inicio y fin por copa__id
-        query = f"SELECT copa__id, datafetd FROM storage.data_m01 WHERE copa__id = {copa__id} ORDER BY datafetd ASC;"
-        df = pd.read_sql_query(query, engine)
+    # Utilizar Pandas para cargar los datos desde la base de datos
+    df = pd.read_sql_query(select_query, engine)
 
-        # Agregar una columna "fecha_fin" con la siguiente fecha en la secuencia
-        df["fecha_fin"] = df["datafetd"].shift(-1)
+    # Convertir la columna 'datafetd' a tipo datetime
+    df['fecha_existente'] = pd.to_datetime(df['fecha_existente'])
 
-        return df
+    # Obtener la lista de estaciones únicas
+    unique_stations = df['id_estacion'].unique()
 
-    except Exception as error:
-        print(f"Error al obtener fechas para copa__id {copa__id}:", error)
-        return None
+    for station in unique_stations:
+        station_df = df[df['id_estacion'] == station]
+
+        # Crear directorio si no existe
+        output_dir = f'estacion_{station}'
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Guardar el DataFrame en un archivo CSV
+        csv_filename = f'{output_dir}/estacion_fechas_existentes_{station}.csv'
+        station_df.to_csv(csv_filename, index=False)
 
 if __name__ == "__main__":
-
-    #missing_ids_df = obtener_combinacion_parametro.compare_copa_ids()  # Obtener los "copa__id" faltantes
-
-    # Convertir los elementos de la columna "copa__id" a enteros
-   # missing_ids = missing_ids_df["copa__id"].astype(int)
-    
-    lista_combinacion_parametro = obtener_combinacion_parametro.compare_copa_ids()
-
-    # Crear un DataFrame para almacenar resultados
-    results_df = pd.DataFrame(columns=["copa__id", "datafetd", "fecha_fin"])
-
-    missing_ids = []
-
-    for copa__id in lista_combinacion_parametro:
-        df = obtener_fecha_por_copa__id(copa__id)
-        if df is not None:
-            # Agregar las filas a results_df
-            results_df = pd.concat([results_df, df], ignore_index=True)
-        else:
-            # Agregar a la lista de datos faltantes
-            missing_ids.append(copa__id)
-
-    print("Resultados:")
-    print(results_df)
-
-    print("\nDatos faltantes:")
-    #print(missing_ids_df)
-    #print("Total de datos faltantes:", len(missing_ids_df))
+    main()
