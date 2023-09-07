@@ -42,11 +42,14 @@ for year in unique_years:
     # Realizar la comparación con la tabla copa en el esquema administrador
     df_year = df_year.merge(pd.read_sql(copa_query, conn), left_on='id_combinacion_parametro', right_on='copa__id', how='left')
     
+    # Renombrar las columnas
+    df_year.rename(columns={'puobcodi': 'codigo', 'copanemo': 'nemonico'}, inplace=True)
+    
     # Generar el nombre del archivo CSV para el año
-    file_name = os.path.join(output_folder, f'puobcodi_fechas_faltantes_{year}.csv')
+    file_name = os.path.join(output_folder, f'{df_year["codigo"].iloc[0]}_fechas_faltantes_{year}.csv')
     
     # Guardar los datos en el archivo CSV correspondiente al año
-    df_year.to_csv(file_name, index=False)
+    df_year.to_csv(file_name, index=False, columns=['id_estacion', 'id_combinacion_parametro', 'codigo', 'nemonico', 'fechas_faltantes'])
     
     print(f'Datos del año {year} guardados en {file_name}')
 
