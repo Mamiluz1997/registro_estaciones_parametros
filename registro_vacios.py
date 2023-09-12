@@ -1,53 +1,100 @@
 import pandas as pd
+import os
+import time
+import psycopg2
+from coneccion_postgres import coneccion_postgres
 
-# Cargar el archivo CSV generado anteriormente
-df_combined = pd.read_csv('result_combinacion_tablas.csv')
+# Obtiene la cadena de conexión a PostgreSQL desde tu función
+db_config = coneccion_postgres()
 
-# Convertir la columna 'datafetd' a tipo de dato datetime
-df_combined['datafetd'] = pd.to_datetime(df_combined['datafetd'])
+input_folder = 'estaciones_inicio'
+output_folder = 'calculo_huecos'
+os.makedirs(output_folder, exist_ok=True)
 
-# Obtener la lista de todas las combinaciones únicas de id_estacion y copa_id
-combinations = df_combined[['esta__id', 'copa__id']].drop_duplicates()
+# Conectar a la base de datos PostgreSQL
+conn = psycopg2.connect(db_config)
 
-# Crear un DataFrame vacío para almacenar las fechas faltantes
-df_missing_dates = pd.DataFrame(columns=['id_estacion', 'id_combinacion_parametro', 'fechas_faltantes'])
+vta_estaciones_query = "SELECT esta__id, puobcodi FROM administrativo.vta_estaciones_todos"
+copa_query = "SELECT copa__id, copanemo FROM administrativo.copa"
 
-# Variable para almacenar el total de fechas faltantes
-total_huecos = 0
+# Cargar los datos de las consultas a la base de datos
+df_estaciones = pd.read_sql_query(vta_estaciones_query, conn)
+df_copa = pd.read_sql_query(copa_query, conn)
 
-# Iterar a través de las combinaciones únicas y encontrar las fechas faltantes para cada una
-for _, row in combinations.iterrows():
-    esta_id = row['esta__id']
-    copa_id = row['copa__id']
+# Lista todos los archivos CSV en la carpeta de entrada
+archivos_csv = [archivo for archivo in os.listdir(input_folder) if archivo.endswith('.csv')]
+
+# Diccionario para almacenar los totales de fechas faltantes por estación
+total_fechas_faltantes_por_estacion = {}
+
+# Itera a través de los archivos CSV en la carpeta de entrada
+for archivo_csv in archivos_csv:
+    # Lee el archivo CSV de la carpeta de entrada
+    ruta_archivo = os.path.join(input_folder, archivo_csv)
+    df = pd.read_csv(ruta_archivo)
+
+    # Convierte la columna 'datafetd' en un objeto datetime
+    df['datafetd'] = pd.to_datetime(df['datafetd'])
     
-    # Filtrar el DataFrame original para la combinación actual
-    filtered_df = df_combined[(df_combined['esta__id'] == esta_id) & (df_combined['copa__id'] == copa_id)]
-    
-    # Crear un rango de fechas completo para la combinación actual
-    min_date = filtered_df['datafetd'].min()
-    max_date = filtered_df['datafetd'].max()
-    date_range = pd.date_range(start=min_date, end=max_date, freq='T')
-    
-    # Encontrar las fechas faltantes restando el rango completo y las fechas existentes
-    missing_dates = date_range[~date_range.isin(filtered_df['datafetd'])]
-    
-    # Crear un DataFrame con las fechas faltantes para esta combinación
-    missing_df = pd.DataFrame({'id_estacion': [esta_id] * len(missing_dates),
-                               'id_combinacion_parametro': [copa_id] * len(missing_dates),
-                               'fechas_faltantes': missing_dates})
-    
-    # Agregar las fechas faltantes al DataFrame final
-    df_missing_dates = pd.concat([df_missing_dates, missing_df], ignore_index=True)
-    
-    # Actualizar el total de fechas faltantes
-    total_huecos += len(missing_dates)
+    # Nombre de la estación a partir del nombre del archivo CSV
+    nombre_estacion = archivo_csv.split('_')[0]
 
-# Guardar las fechas faltantes en un archivo CSV
-df_missing_dates.to_csv('result_huecos.csv', index=False)
-print("fechas faltantes guardadas")
+    # Agrega las columnas 'codigo' y 'nemonico' a partir de las consultas a la base de datos
+    df = df.merge(df_estaciones, left_on='esta__id', right_on='esta__id', how='left')
+    df = df.merge(df_copa, left_on='copa__id', right_on='copa__id', how='left')
+    
+    # Itera a través de los años únicos en el DataFrame
+    años_unicos = df['datafetd'].dt.year.unique()
+    for año in años_unicos:
+        # Filtra el DataFrame de la estación por año
+        df_año = df[df['datafetd'].dt.year == año]
+        
+        # Calcula las fechas faltantes por minuto para el año
+        minuto = pd.Timedelta(minutes=1)
+        fecha_inicial = df_año['datafetd'].min()
+        fecha_final = df_año['datafetd'].max()
+        fechas_faltantes = []
+        while fecha_inicial <= fecha_final:
+            if fecha_inicial not in df_año['datafetd'].values:
+                fechas_faltantes.append(fecha_inicial)
+            fecha_inicial += minuto
+        
+        # Crea un DataFrame con las fechas faltantes
+        df_fechas_faltantes = pd.DataFrame({'fechas_faltantes': fechas_faltantes})
+        
+        # Agrega las columnas 'id_estacion', 'codigo', 'id_combinacion_parametro', 'nemonico', 'fechas_faltantes'
+        df_fechas_faltantes['id_estacion'] = nombre_estacion
+        df_fechas_faltantes['codigo'] = df_año['puobcodi'].iloc[0]  # Tomamos el valor del primer registro
+        df_fechas_faltantes['id_combinacion_parametro'] = df_año['copa__id'].iloc[0]  # Tomamos el valor del primer registro
+        df_fechas_faltantes['nemonico'] = df_año['copanemo'].iloc[0]  # Tomamos el valor del primer registro
+        
+        # Reordena las columnas para tener 'id_estacion', 'codigo', 'id_combinacion_parametro', 'nemonico', 'fechas_faltantes'
+        df_fechas_faltantes = df_fechas_faltantes[['id_estacion', 'codigo', 'id_combinacion_parametro', 'nemonico', 'fechas_faltantes']]
+        
+        # Genera un sufijo para el archivo de salida para evitar sobreescribir
+        sufijo_archivo_salida = f'{nombre_estacion}_{año}'
+        
+        # Guarda el DataFrame de fechas faltantes en un archivo CSV en la carpeta de salida
+        nombre_archivo = f'{sufijo_archivo_salida}_fechas_faltantes_{año}.csv'
+        ruta_archivo_salida = os.path.join(output_folder, nombre_archivo)
+        df_fechas_faltantes.to_csv(ruta_archivo_salida, index=False)
+        
+        # Calcula el total de fechas faltantes por estación
+        total_fechas_faltantes = len(fechas_faltantes)
+        if nombre_estacion in total_fechas_faltantes_por_estacion:
+            total_fechas_faltantes_por_estacion[nombre_estacion] += total_fechas_faltantes
+        else:
+            total_fechas_faltantes_por_estacion[nombre_estacion] = total_fechas_faltantes
 
-# Guardar la cantidad total de fechas faltantes en un archivo de texto
-with open('total_huecos.txt', 'w') as txt_file:
-    txt_file.write(f'Total de Huecos: {total_huecos}')
+# Calcula el total de todas las fechas faltantes
+total_fechas_faltantes_total = sum(total_fechas_faltantes_por_estacion.values())
 
-print(f'Se ha guardado el total de huecos en total_huecos.txt: {total_huecos}')
+# Guarda los totales en un archivo de texto
+with open('totales_fechas_faltantes.txt', 'w') as txt_file:
+    txt_file.write("Totales de fechas faltantes por estación:\n")
+    for estacion, total in total_fechas_faltantes_por_estacion.items():
+        txt_file.write(f"{estacion}: {total}\n")
+
+    txt_file.write(f"\nTotal de todas las fechas faltantes: {total_fechas_faltantes_total}")
+
+print("Proceso completado.")
